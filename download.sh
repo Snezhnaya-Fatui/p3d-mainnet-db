@@ -1,41 +1,44 @@
 #!/bin/bash
 
-# GitHub username and repository name
 GITHUB_USER="Snezhnaya-Fatui"
 GITHUB_REPO="p3d-mainnet-db"
 
-# Fetching the latest release tag
-latest_release=$(curl -s "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+latest_release=$(curl -s "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep -oP '"tag_name": "\K[^"]+')
 if [ -z "$latest_release" ]; then
     echo "Failed to fetch latest release tag. Exiting."
     exit 1
 fi
 echo "Latest release tag: ${latest_release}"
 
-# Download directory
 download_dir="./downloads"
-mkdir -p "${download_dir}"
+mkdir -p "${download_dir}" || { echo "Failed to create download directory. Exiting."; exit 1; }
 
-# Downloading the latest release parts of db
-for ((i=1; i<=11; i++)); do
-    part=$(printf "%03d" $i)
-    url="https://github.com/${GITHUB_USER}/${GITHUB_REPO}/releases/download/${latest_release}/db.7z.${part}"
-    echo "Downloading ${url} ..."
-    wget_output=$(wget -nv --show-progress -P "${download_dir}" "${url}" 2>&1)
-    if [ $? -ne 0 ]; then
-        echo "Failed to download ${url}:"
-        echo "$wget_output"
-        exit 1
+assets=$(curl -s "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep -oP '"name": "\K[^"]+')
+echo "Available assets:"
+echo "${assets}"
+
+# Create an array to hold download URLs
+urls=()
+
+part_number=1
+while true; do
+    part=$(printf "%03d" $part_number)
+    asset_name="db.7z.${part}"
+    
+    download_url=$(curl -s "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/releases/latest" | grep -oP '"browser_download_url": "\K[^"]+' | grep "$asset_name")
+
+    if [ -z "$download_url" ]; then
+        echo "File ${asset_name} not found, stopping."
+        break
     fi
+
+    urls+=("$download_url")
+    part_number=$((part_number + 1))
 done
 
-# Waiting for all download tasks to complete
-wait
+# Download all URLs in parallel
+echo "Starting parallel download of ${#urls[@]} files..."
+printf "%s\n" "${urls[@]}" | xargs -n 1 -P "${#urls[@]}" wget -L --content-disposition -nv --show-progress -P "${download_dir}"
 
-# Check if all parts were downloaded
 num_files=$(ls -1 "${download_dir}/db.7z."* 2>/dev/null | wc -l)
-if [ $num_files -eq 11 ]; then
-    echo "Download complete. All parts downloaded successfully."
-else
-    echo "Download incomplete. Expected 11 parts, found ${num_files}."
-fi
+echo "Download complete. Total parts downloaded: ${num_files}."
